@@ -103,7 +103,6 @@ class Source(object):
 
             log.debug("downloading %s to %s", track.url, track.localname)
             download.start()
-            time.sleep(1)
 
             log.debug("playing %s", track.localname)
             play.start()
