@@ -119,10 +119,11 @@ class Source(object):
 
     def play(self, track, buffer=4096):
         counter = count()
-        with opener(track.localname, 'rb') as f:
-            stat = partial(os.fstat, f.fileno())
-            while counter.next() < 5 and stat().st_size < buffer:
-                time.sleep(.5)
+        stat = partial(os.stat, track.localname)
+        exists = partial(os.path.exists, track.localname)
+
+        while counter.next() < 5 and not (exists() and stat().st_size < buffer):
+            time.sleep(.5)
 
         with opener(os.devnull, 'wb') as null:
             proc = subprocess.Popen(self.player.format(**track._asdict()),
