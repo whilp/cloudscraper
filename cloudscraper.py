@@ -2,10 +2,13 @@
 # coding: utf-8
 
 import logging
+import multiprocessing
+import os
 import sys
 
 from collections import namedtuple
-from functools import wraps
+from functools import partial, wraps
+from itertools import count
 from optparse import OptionParser, make_option as Option
 from urllib import FancyURLopener
 
@@ -34,6 +37,9 @@ def main():
     (opts, args) = optionparser.parse_args(args=sys.argv[1:])
 
     if not opts.silent:
+        qhandler = QueueHandler()
+        QueueHandler.queue = qhandler.queue
+        log.addHandler(qhandler)
         log.addHandler(logging.StreamHandler())
         log.level = max(1, logging.WARNING - (10 * (opts.verbose - opts.quiet)))
 
@@ -63,7 +69,66 @@ options = [
         help="specify source"),
 ]
 
-Track = namedtuple("Track", "url title artist referer duration")
+# http://stackoverflow.com/questions/641420/how-should-i-log-while-using-multiprocessing-in-python/894284#894284
+class QueueHandler(logging.Handler):
+    queue = None
+    
+    def __init__(self, handler=None, queue=None, **kwargs):
+        super(QueueHandler, self).__init__(**kwargs)
+        self.handler = handler if handler is not None else logging.StreamHandler()
+        self.queue = queue if queue is not None else multiprocessing.Queue(-1)
+
+    def start(self):
+        receiver = threading.Thread(target=self.receive)
+        receiver.daemon = True
+        receiver.start()
+
+    def receive(self):
+        while True:
+            try:
+                record = self.queue.get()
+                self.handler.emit(record)
+            except EOFError:
+                break
+
+    def send(self, string):
+        self.queue.put_nowait(string)
+
+    def serialize(self, record):
+        if record.args:
+            record.msg = record.msg % record.args
+            record.args = None
+        if record.exc_info:
+            _ = self.format(record)
+            record.exc_info = None
+
+        return record
+
+    def setFormatter(self, fmt):
+        self.handler.setFormatter(fmt)
+        super(QueueHandler, self).setFormatter(fmt)
+    
+    def emit(self, record):
+        try:
+            self.send(self.serialize(record))
+        except:
+            self.handleError(record)
+
+    def close(self):
+        self.handler.close()
+        super(QueueHandler, self).close()
+
+    @classmethod
+    def logtoq(self, fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            log = logging.getLogger()
+            log.level = logging.DEBUG
+            log.addHandler(QueueHandler(queue=self.queue))
+        return wrapper
+
+
+Track = namedtuple("Track", "url title artist referer duration localname")
 
 class Source(object):
     sources = {}
