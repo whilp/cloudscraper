@@ -89,7 +89,7 @@ class Source(object):
 
     @classmethod
     def match(self, url):
-        for source in self.sources:
+        for source in self.sources.values():
             if source.match(url):
                 return source
 
