@@ -5,6 +5,8 @@ import logging
 import multiprocessing
 import os
 import sys
+import subprocess
+import time
 
 from collections import namedtuple
 from functools import partial, wraps
@@ -40,6 +42,10 @@ def main():
         log.addHandler(logging.StreamHandler())
         log.level = max(1, logging.WARNING - (10 * (opts.verbose - opts.quiet)))
 
+    root = os.path.abspath(os.path.expanduser(opts.dir))
+    makedirs(root)
+    os.chdir(root)
+
     command, url = args[:2]
     if opts.source:
         source = Source.sources.get(opts.source, None)
@@ -64,12 +70,16 @@ options = [
         help="increase verbosity"),
     Option("--source", default=None, action="store",
         help="specify source"),
+    Option("--dir", default="~/.cloudscraper", action="store",
+        help="application directory"),
 ]
 
 Track = namedtuple("Track", "url title artist referer duration localname")
 
 class Source(object):
     sources = {}
+    player = "mplayer {localname}"
+    chunksize = 8192
 
     def __init__(self, **kwargs):
         pass
@@ -83,6 +93,42 @@ class Source(object):
             if source.match(url):
                 return source
 
+    def stream(self, url):
+        for track in self.scrape(url):
+            log.info("streaming %s", track.referer)
+
+            Process = partial(multiprocessing.Process, args=(track,))
+            procs = [Process(target=fn) for fn in (self.play, self.download)]
+            play, download = procs
+
+            log.debug("downloading %s to %s", track.url, track.localname)
+            download.start()
+            time.sleep(1)
+
+            log.debug("playing %s", track.localname)
+            play.start()
+            play.join()
+            download.terminate()
+
+    def download(self, track):
+        stream = self.open(track.url)
+        with opener(track.localname, 'wb') as f:
+            for chunk in iter(partial(stream.read, self.chunksize), ""):
+                f.write(chunk)
+                f.flush()
+
+    def play(self, track, buffer=4096):
+        counter = count()
+        with opener(track.localname, 'rb') as f:
+            stat = partial(os.fstat, f.fileno())
+            while counter.next() < 5 and stat().st_size < buffer:
+                time.sleep(.5)
+
+        with opener(os.devnull, 'wb') as null:
+            proc = subprocess.Popen(self.player.format(**track._asdict()),
+                shell=True, stdout=null, stderr=null)
+            proc.wait()
+
 class SoundCloud(Source):
 
     def tracks(fn):
@@ -94,6 +140,7 @@ class SoundCloud(Source):
                     url=data["streamUrl"],
                     artist=data["user"]["username"],
                     referer="http://soundcloud.com{uri}".format(**data),
+                    localname=data["uri"].lstrip("/") + ".mp3",
                     duration=data["duration"],
                 )
         return wrapper
@@ -122,6 +169,23 @@ class SoundCloud(Source):
 
 if etree and json:
     Source.sources["soundcloud"] = SoundCloud
+
+def makedirs(path):
+    try:
+        os.makedirs(path)
+    except OSError, e:
+        if e.errno != 17:
+            raise
+
+def opener(path, mode='w', encoding='utf-8', root='.'):
+    path = os.path.join(root, path)
+    if 'w' in mode:
+        makedirs(os.path.dirname(path))
+
+    if 'b' in mode:
+        return open(path, mode)
+    else:
+        return codecs.open(path, mode, encoding)
 
 if __name__ == "__main__":
     try:
