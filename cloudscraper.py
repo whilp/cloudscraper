@@ -135,14 +135,17 @@ class SoundCloud(Source):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             for data in fn(*args, **kwargs):
-                yield Track(
-                    title=data["title"],
-                    url=data["streamUrl"],
-                    artist=data["user"]["username"],
-                    referer="http://soundcloud.com{uri}".format(**data),
-                    localname=data["uri"].lstrip("/") + ".mp3",
-                    duration=data["duration"],
-                )
+                if isinstance(data, Track):
+                    yield data
+                else:
+                    yield Track(
+                        title=data["title"],
+                        url=data["streamUrl"],
+                        artist=data["user"]["username"],
+                        referer="http://soundcloud.com{uri}".format(**data),
+                        localname=data["uri"].lstrip("/") + ".mp3",
+                        duration=data["duration"],
+                    )
         return wrapper
     
     @tracks
