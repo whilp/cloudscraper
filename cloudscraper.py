@@ -92,10 +92,11 @@ class Source(object):
         for source in self.sources.values():
             if source.match(url):
                 return source
+        return self.sources["default"]
 
     def stream(self, url):
         for track in self.scrape(url):
-            log.info("streaming %s", track.referer)
+            log.info("streaming %s", track.referer or track.url)
 
             Process = partial(multiprocessing.Process, args=(track,))
             procs = [Process(target=fn) for fn in (self.play, self.download)]
@@ -128,6 +129,22 @@ class Source(object):
             proc = subprocess.Popen(self.player.format(**track._asdict()),
                 shell=True, stdout=null, stderr=null)
             proc.wait()
+
+class Direct(Source):
+    
+    def scrape(self, url):
+        return [Track(
+            title="",
+            url=url,
+            artist="",
+            referer=url,
+            localname=os.path.basename(url),
+            duration="",
+        )]
+
+    @classmethod
+    def match(self, url):
+        return False
 
 class SoundCloud(Source):
 
@@ -170,6 +187,7 @@ class SoundCloud(Source):
     def match(self, url):
         return "soundcloud.com" in url
 
+Source.sources["default"] = Direct
 if etree and json:
     Source.sources["soundcloud"] = SoundCloud
 
